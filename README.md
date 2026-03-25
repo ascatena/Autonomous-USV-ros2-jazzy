@@ -98,6 +98,8 @@ El sistema se organiza en tres capas que interactúan entre sí:
 
 ### Transformaciones TF publicadas
 
+![Figura 3. Árbol de frames y transformadas, con sus repectivos nodos publicadores.](imgs/arbol_de_tf.drawio.png)
+
 | Transformación | Publicador | Frecuencia | Descripción |
 |---|---|---|---|
 | `map → odom` | `ekf_filter_node` | 20 Hz | Ancla la posición del robot al mapa global (GPS) |
@@ -129,6 +131,9 @@ ros2_ws/
 │       ├── USV_DiagrmaNodosTopicos.drawio.png
 │       ├── usv_lago_1.jpeg
 │       ├── usv_lago_2.jpeg
+│       ├── arbol_de_tf.drawio.png
+│       ├── Flujo_MUX_uart_bridge.drawio.png
+│       └── Flujo_Nav_auto.drawio.png
 └── src/
     ├── robot_1/                         ← Paquete de interfaz de hardware
     │   └── robot_1/
@@ -161,13 +166,13 @@ ros2_ws/
 #### `uart_bridge.py`
 Es el nodo más crítico del sistema. Cumple tres roles simultáneos: leer y parsear los datos crudos del hardware, publicarlos como mensajes estándar de ROS 2, y arbitrar qué comandos de velocidad se envían físicamente a los motores.
 
-**Comunicación serie:** Lee continuamente el puerto `/dev/ttyAMA0` a 30 Hz. Cada trama entrante tiene 55 bytes y comienza con un byte de cabecera que indica su tipo: `0x49` ('I') para datos de IMU y `0x47` ('G') para datos de GPS. El struct de IMU se desempaqueta como `<9i4f` (9 enteros + 4 floats), obteniendo acelerómetro, giroscopio, magnetómetro y cuaternión. El struct de GPS extrae latitud, longitud, altitud, número de satélites y estado del fix.
+**Comunicación serie:** Lee continuamente el puerto `/dev/ttyAMA0` a 30 Hz. Cada trama entrante tiene 55 bytes y comienza con un byte de cabecera que indica su tipo: `0x49` ('I') para datos de IMU y `0x47` ('G') para datos de GPS. El struct de IMU se desempaqueta como `<9i4f` (9 enteros + 4 floats), obteniendo acelerómetro, giroscopio, magnetómetro y cuaternión. A partir del struct de GPS extrae latitud, longitud, altitud, número de satélites (in view) y estado del fix.
 
 **Calibración de IMU:** Durante los primeros 20 segundos de operación el nodo acumula lecturas de acelerómetro y giroscopio en un buffer, calcula el promedio de cada eje y lo guarda como offset. A partir de ese momento todas las publicaciones aplican estos offsets para eliminar el sesgo (bias) del sensor. Durante la calibración no se publican datos de IMU.
 
 **Orientación:** El cuaternión que provee el MPU9250 se usa para roll y pitch, pero el yaw se reemplaza completamente por el heading calculado desde el magnetómetro (con offsets hardcodeados: `mx-120.2`, `my-118.3`, `mz+67.1`). Esto se hace porque el yaw del MPU9250 acumula deriva, mientras que el magnetómetro provee una referencia absoluta al norte magnético.
 
-**MUX de control:** Implementa un sistema de prioridad entre dos fuentes de comandos. El canal manual (`/turtle1/cmd_vel`) tiene prioridad absoluta: cada vez que llega un mensaje manual se actualiza un timestamp. El canal autónomo (`/cmd_vel` de Nav2) solo se procesa si han pasado más de `teleop_timeout` segundos (1.0 s por defecto) desde el último comando manual. Incluye una lógica especial para giros estáticos: si se detecta `angular.z ≠ 0` con `linear.x ≈ 0`, fuerza `linear.x = 1.0` para asegurar flujo de agua sobre el timón (necesario para que el timón tenga efecto). Los comandos se empaquetan como `'V' + pack('<BB', linear_x, angular_z)` donde `linear_x ∈ [0,255]` y `angular_z ∈ [0,255]` centrado en 128.
+**MUX de control:** Implementa un sistema de prioridad entre dos fuentes de comandos. El canal manual de teleoperación (`/turtle1/cmd_vel`) tiene prioridad absoluta: cada vez que llega un mensaje manual se actualiza un timestamp. El canal autónomo (`/cmd_vel` de Nav2) solo se procesa si han pasado más de `teleop_timeout` segundos (1.0 s por defecto) desde el último comando manual. Incluye una lógica especial para giros estáticos: si se detecta `angular.z ≠ 0` con `linear.x ≈ 0`, fuerza `linear.x = 1.0` para asegurar flujo de agua sobre el timón (necesario para que el timón tenga efecto). Los comandos se empaquetan como `'V' + pack('<BB', linear_x, angular_z)` donde `linear_x ∈ [0,255]` y `angular_z ∈ [0,255]` centrado en 128.
 
 **Watchdog serial:** Cada 2 segundos envía la trama `b"W\1\1"` al STM32 como señal de vida. Si el STM32 deja de recibir esta trama, puede implementar una rutina de seguridad (parada de motores) del lado del firmware.
 
@@ -176,7 +181,7 @@ Es el nodo más crítico del sistema. Cumple tres roles simultáneos: leer y par
 #### `estimacion_2_odom.py`
 Resuelve el problema de la ausencia de encoders en los motores del barco. Sin encoders no hay forma de medir directamente cuánto se desplazó el barco, por lo que este nodo genera una odometría "sintética" a partir de los comandos de velocidad y un modelo simplificado de inercia acuática.
 
-**Modelo de inercia:** En lugar de aplicar los comandos de velocidad instantáneamente, aplica un filtro de primer orden: `velocidad_actual += (velocidad_deseada - velocidad_actual) × 0.1`. Este factor (0.1) simula la inercia del barco en el agua, suavizando las transiciones de velocidad. Cuando la velocidad actual cae por debajo de 0.01 m/s se fuerza a cero (snap-to-zero) para evitar deriva infinitesimal.
+**Modelo de inercia:** En lugar de aplicar los comandos de velocidad instantáneamente, aplica un filtro de primer orden: `velocidad_actual += (velocidad_deseada - velocidad_actual) × 0.1`. Este factor (0.1) simula la inercia del barco en el agua, suavizando las transiciones de velocidad. Cuando la velocidad actual cae por debajo de 0.01 m/s se fuerza a cero para evitar deriva.
 
 **Integración de posición:** En cada ciclo de 30 Hz integra la velocidad actual en el tiempo para actualizar la posición teórica `(x, y, θ)` del barco. Esta posición no representa la posición real en el mundo (para eso está el GPS), sino el desplazamiento relativo desde el inicio, que el EKF local usa para estimar la transformación `odom → base_link`.
 
@@ -210,7 +215,7 @@ Fusiona dos fuentes de datos: la odometría sintética de `/wheel/odometry` (se 
 #### `ekf.yaml`
 Configura el EKF global (`ekf_filter_node`) que opera a 20 Hz con `world_frame: map`. Su función es anclar la posición del barco al mundo real usando el GPS, publicando la transformación `map → odom` y el tópico `/odometry/filtered`.
 
-Fusiona la IMU de `/imu` (orientación y velocidades angulares) y la posición GPS cartesiana de `/odometry/gps` (x, y, z absoluto proveniente de `navsat_transform_node`). La odometría de `/wheel/odometry` está comentada en esta configuración, dejando que el GPS sea la fuente primaria de posición absoluta. La `process_noise_covariance` es más permisiva en posición (`1.0`) que en el EKF local, aceptando que la posición GPS tiene mayor incertidumbre natural.
+Fusiona la IMU de `/imu` (orientación y velocidades angulares) y la posición GPS cartesiana de `/odometry/gps` (x, y, z absoluto proveniente de `navsat_transform_node`). La odometría de `/wheel/odometry` está comentada en esta configuración, dejando que el GPS sea la fuente primaria de posición absoluta. La `process_noise_covariance` es más permisiva en posición (`1.0`) que en el EKF local, aceptando que la posición GPS tiene mayor incertidumbre intrínseca.
 
 ---
 
@@ -285,20 +290,7 @@ El paquete pone en juego dos nodos en producción:
 
 Aunque ambos nodos son independientes entre sí (no se llaman directamente), están acoplados a través del tópico `/cmd_vel`:
 
-```
-Nav2 (controller_server)
-        │
-        ▼
-velocity_smoother ──► /cmd_vel ──┬──► uart_bridge (MUX)
-                                  │         │
-                                  │         ▼
-                                  │     UART TX → STM32 → Motores
-                                  │
-                                  └──► synthetic_odom_publisher
-                                              │
-                                              ▼
-                                       /wheel/odometry → EKF local
-```
+![Figura 4. Flujo de navegación autónoma.](imgs/Flujo_Nav_auto.drawio.png)
 
 Esto significa que cuando Nav2 ordena una velocidad, ambos nodos la reciben simultáneamente: `uart_bridge` la ejecuta físicamente en los motores, y `synthetic_odom_publisher` la usa para estimar cuánto se movió el barco. El EKF local toma esa estimación y la fusiona con la IMU para mantener la transformación `odom → base_link` actualizada.
 
@@ -308,9 +300,7 @@ El canal de teleoperación (`/turtle1/cmd_vel`) en cambio **solo llega a `uart_b
 
 **Fase 1 — Arranque y calibración (0 a 20 segundos):**
 
-Al iniciar, `uart_bridge` abre el puerto `/dev/ttyAMA0` y comienza a leer tramas. Durante los primeros 20 segundos acumula lecturas de la IMU en un buffer para calcular los offsets de calibración. Durante este período **no publica `/imu`**, lo que significa que los filtros EKF no tienen datos de orientación y no pueden inicializarse correctamente. El sistema operativo puede enviar comandos UART pero el barco no responderá de forma confiable hasta que la calibración termine.
-
-> ⚠️ Es fundamental mantener el barco **completamente quieto y nivelado** durante estos 20 segundos. Cualquier movimiento introduce sesgo en los offsets y degrada la estimación de orientación para toda la sesión.
+Al iniciar, `uart_bridge` abre el puerto `/dev/ttyAMA0` y comienza a leer tramas. Durante los primeros 20 segundos acumula lecturas de la IMU en un buffer para calcular los offsets de calibración. Durante este período **no publica `/imu`**, lo que significa que los filtros EKF no tienen datos de orientación y no pueden inicializarse correctamente. 
 
 **Fase 2 — Operación normal:**
 
@@ -359,19 +349,17 @@ Los offsets del magnetómetro (`mx-120.2`, `my-118.3`, `mz+67.1`) están hardcod
 | Covarianza detenido | `1e-9` | Confianza en velocidad = 0 cuando el barco está parado. Actúa como ancla para el EKF. |
 | Covarianza movimiento | `0.5` | Confianza en la odometría durante el movimiento. Valor alto indica al EKF que priorice otros sensores. |
 
-> **Tip de tuneo:** Si el barco oscila o tiene comportamiento errático en la navegación autónoma, el primer parámetro a ajustar es `inertia_factor`. Un valor de `0.05` da más inercia y suaviza trayectorias en agua agitada. Un valor de `0.2` da respuesta más rápida, útil si el barco es liviano y ágil.
-
 ---
 
 ## Paquete `robot_config` — Localización y Navegación
 
-El paquete `robot_config` contiene toda la configuración del cerebro autónomo del USV: los filtros de fusión de sensores (EKF), la transformación GPS→UTM, la pila de navegación Nav2 y los archivos de lanzamiento que orquestan el arranque del sistema completo. A diferencia de `robot_1`, este paquete no contiene código Python propio — su valor está en la configuración precisa de nodos externos adaptados a las particularidades de una embarcación de superficie.
+El paquete `robot_config` contiene toda la configuración de la navegación autónoma del USV: los filtros de fusión de sensores (EKF), la transformación GPS→UTM, la pila de navegación Nav2 y los archivos de lanzamiento del arranque del sistema completo. A diferencia de `robot_1`, este paquete no contiene código Python propio sino la configuración de nodos externos adaptados al objetivo del proyecto.
 
 ---
 
 ### Flujo de localización en tiempo real
 
-La localización es el proceso por el cual el sistema construye continuamente una respuesta a la pregunta *¿dónde está el barco y hacia dónde mira?* Para responderla, el sistema combina tres fuentes de información imperfectas — la odometría sintética, la IMU y el GPS — usando una arquitectura de doble EKF.
+La localización es el proceso por el cual el sistema construye continuamente dónde está el barco y hacia dónde mira. Combina tres fuentes de información — la odometría sintética, la IMU y el GPS — usando la arquitectura de doble EKF.
 
 **Paso 1 — Datos crudos disponibles:**
 
@@ -391,13 +379,7 @@ Fusiona `/odometry/gps` e `/imu` a 20 Hz. Su función es anclar la posición del
 
 El resultado final es el árbol TF completo:
 
-```
-map ──(ekf_global, 20Hz)──► odom ──(ekf_local, 30Hz)──► base_link
-                                                              │
-                                          (estáticas) ────────┤
-                                                         imu_frame
-                                                         gps_frame
-```
+![Figura 5. Árbol de frames y transformadas, con sus repectivos nodos publicadores.](imgs/arbol_de_tf.drawio.png)
 
 Con este árbol disponible, cualquier nodo del sistema puede conocer la posición y orientación del barco en el mundo en cualquier momento consultando las TFs.
 
@@ -422,25 +404,7 @@ En cada ciclo, `controller_server` verifica si el barco está dentro de la toler
 **5. Recuperación ante fallos:**
 Si la navegación falla (por ejemplo, el barco pierde localización o el controlador no puede seguir la ruta), `bt_navigator` ejecuta la acción de recuperación definida en `usv_nav.xml`: esperar 5 segundos y reintentar. No hay maniobras de recuperación agresivas (spin, backup) ya que el barco no puede ejecutarlas.
 
-```
-Foxglove /goal_pose
-        │
-        ▼
-  bt_navigator (usv_nav.xml)
-        │
-        ├──► planner_server ──► ruta (línea recta en agua abierta)
-        │         │
-        │         ▼
-        └──► controller_server (Pure Pursuit, 10 Hz)
-                  │
-                  ▼
-          velocity_smoother
-                  │
-                  ▼
-            /cmd_vel ──► MUX uart_bridge ──► STM32
-                  │
-                  └──► synthetic_odom_publisher ──► /wheel/odometry ──► EKF local
-```
+![Figura 6. Flujo de navegación autónoma.](imgs/Flujo_Nav_auto.drawio.png)
 
 ---
 
@@ -456,7 +420,7 @@ magnetic_declination_radians: -0.18006  # ← cambiar según la zona
 
 El valor correcto para cualquier coordenada geográfica se puede obtener en [ngdc.noaa.gov/geomag/calculators/magcalc.shtml](https://www.ngdc.noaa.gov/geomag/calculators/magcalc.shtml). Una declinación incorrecta introduce un error sistemático en la orientación del barco que el EKF no puede compensar.
 
-#### Adaptar a otro barco o cuerpo de agua
+#### Adaptar al entorno
 
 Los parámetros más relevantes de `nav2_params.yaml` para adaptar el sistema a un barco diferente o a condiciones distintas son:
 
@@ -469,13 +433,12 @@ Los parámetros más relevantes de `nav2_params.yaml` para adaptar el sistema a 
 | `inflation_radius` | `nav2_params.yaml` | `1.0` m (global) | Aumentar para mantener mayor distancia a orillas o estructuras |
 | `robot_radius` | `nav2_params.yaml` | `0.35` m | Ajustar al tamaño físico real del barco |
 | `frequency` | `navsat.yaml` | `30` Hz | Reducir si el receptor GPS opera a menor frecuencia |
-| `magnetic_declination_radians` | `navsat.yaml` | `-0.18006` | Cambiar según la zona geográfica de operación |
 
 #### Adaptar los filtros EKF
 
 Si se cambia la IMU o los sensores, los parámetros de covarianza en `ekf_local.yaml` y `ekf.yaml` deben revisarse. Los más relevantes son:
 
-- **`process_noise_covariance`:** valores más altos = el filtro confía menos en el modelo cinemático y más en los sensores. Aumentar si el barco tiene mucha perturbación dinámica (olas, viento).
+- **`process_noise_covariance`:** valores más altos = el filtro confía menos en el modelo cinemático y más en los sensores. Aumentar si el barco tiene mucha perturbación dinámica.
 - **`imu0_config`:** matriz booleana que define qué componentes de la IMU usa cada EKF. Modificar si se agrega o reemplaza la IMU por un modelo con diferentes capacidades.
 - **`odom0_config`:** en `ekf_local.yaml` define qué componentes de `/wheel/odometry` se usan. Actualmente solo velocidades (no posición), lo cual es correcto para odometría sintética.
 
@@ -483,7 +446,7 @@ Si se cambia la IMU o los sensores, los parámetros de covarianza en `ekf_local.
 
 ### Orden de arranque y dependencias
 
-El arranque correcto del sistema depende de que cada subsistema tenga disponibles las TFs que necesita antes de inicializarse. `launch_general.launch.py` garantiza este orden:
+El arranque correcto del sistema depende de que cada subsistema tenga disponibles las TFs que necesita antes de inicializarse. Este orden es:
 
 ```
 t=0s   navsat.launch.py       → TFs estáticas (imu_frame, gps_frame) + navsat_transform_node
@@ -492,9 +455,7 @@ t=0s   ekf.launch.py          → comienza a fusionar /odometry/gps + /imu
 t=5s   navigation.launch.py   → Nav2 arranca con TFs ya estables
 ```
 
-El `TimerAction` de 5 segundos es crítico por dos razones. Primero, los filtros EKF necesitan algunas iteraciones para converger desde su estado inicial a una estimación confiable — si Nav2 arrancara inmediatamente, intentaría leer una TF `map → odom` que aún no existe o que tiene alta incertidumbre. Segundo, `navsat_transform_node` necesita recibir al menos una lectura de GPS válida y una TF `odom → base_link` estable antes de poder publicar `/odometry/gps`. Sin este dato, el EKF global no puede inicializarse y la TF `map → odom` nunca aparece.
-
-> **Si Nav2 falla al arrancar con el error `"waiting for transform"` o `"tf timeout"`**, la causa más probable es que los 5 segundos no son suficientes para que los EKF converjan — por ejemplo, si el GPS tarda más en obtener fix o si la IMU todavía está en calibración. En ese caso, aumentar el valor del `TimerAction` en `launch_general.launch.py`.
+El `TimerAction` de 5 segundos es por dos razones. Primero, los filtros EKF necesitan algunas iteraciones para converger desde su estado inicial a una estimación confiable — si Nav2 arrancara inmediatamente, intentaría leer una TF `map → odom` que aún no existe o que tiene alta incertidumbre. Segundo, `navsat_transform_node` necesita recibir al menos una lectura de GPS válida y una TF `odom → base_link` estable antes de poder publicar `/odometry/gps`. Sin este dato, el EKF global no puede inicializarse y la TF `map → odom` nunca aparece.
 
 ---
 
@@ -615,7 +576,7 @@ ls -la /dev/ttyAMA0
 
 ```bash
 # Clonar el repositorio
-git clone https://github.com/<tu-usuario>/usv-ros2-jazzy.git ~/ros2_ws
+git clone https://github.com/ascatena/Autonomous-USV-ros2-jazzy.git ~/ros2_ws
 cd ~/ros2_ws
 
 # Instalar dependencias declaradas en package.xml
@@ -631,7 +592,7 @@ colcon build --symlink-install
 source install/setup.bash
 ```
 
-> **Tip:** Agregar el source automático al `.bashrc` para no tener que ejecutarlo en cada sesión:
+> **Nota:** Agregar el source automático al `.bashrc` para no tener que ejecutarlo en cada sesión:
 > ```bash
 > echo "source /opt/ros/jazzy/setup.bash" >> ~/.bashrc
 > echo "source ~/ros2_ws/install/setup.bash" >> ~/.bashrc
@@ -677,7 +638,7 @@ ros2 launch robot_config launch_general.launch.py
 
 ```
 [uart_bridge]: Abrir UART: /dev/ttyAMA0 @ 115200
-[uart_bridge]: --- INICIANDO CALIBRACION DE IMU (20s) - MANTEN EL ROBOT QUIETO ---
+[uart_bridge]: --- INICIANDO CALIBRACION DE IMU (20s) - MANTEN EL USV QUIETO ---
 [uart_bridge]: Calibrando... 5.0/20.0s
 [uart_bridge]: Calibrando... 10.0/20.0s
 [uart_bridge]: Calibrando... 15.0/20.0s
@@ -688,8 +649,6 @@ ros2 launch robot_config launch_general.launch.py
 [lifecycle_manager_navigation]: Creating and configuring nodes...
 [lifecycle_manager_navigation]: All nodes active
 ```
-
-> ⚠️ Mantener el barco **completamente quieto** durante los primeros 20 segundos de calibración. No moverlo, no tocarlo. Cualquier vibración introduce error en los offsets de la IMU.
 
 El sistema está listo para operar cuando aparece `All nodes active` en la consola. En ese punto los filtros EKF están convergidos, Nav2 está activo y el barco responde a comandos.
 
@@ -787,8 +746,6 @@ ros2 topic pub --once /turtle1/cmd_vel geometry_msgs/Twist \
 ```bash
 sudo shutdown -h now
 ```
-
-> ⚠️ No desconectar la alimentación de la RPi sin apagarla correctamente. Un corte abrupto puede corromper la tarjeta SD.
 
 ---
 
@@ -905,13 +862,11 @@ Las pruebas confirmaron el correcto funcionamiento del sistema de comunicación 
 
 ### Imágenes del USV en el agua
 
-![Figura 3. Vista general del USV en el Lago del Bosque durante el ensayo](imgs/usv_lago_1.jpeg)
-*Figura 3. Vista general del USV navegando en el Lago del Bosque, La Plata.*
+![Figura 6. Vista general del USV en el Lago del Bosque durante el ensayo](imgs/usv_lago_1.jpeg)
 
 ---
 
-![Figura 4. Vista lateral del USV durante la prueba de teleoperación](imgs/usv_lago_2.jpeg)
-*Figura 4. Vista lateral del USV durante la prueba de teleoperación.*
+![Figura 7. Vista lateral del USV durante la prueba de teleoperación](imgs/usv_lago_2.jpeg)
 
 ---
 
