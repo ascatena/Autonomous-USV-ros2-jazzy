@@ -1,0 +1,43 @@
+navsat_transform_node:
+  ros__parameters:
+
+    # DEFINICIÓN EXPLÍCITA DE FRAMES
+    map_frame: map           # Marco global (UTM)
+    odom_frame: odom         # marco local 
+    base_link_frame: base_link # Marco USV
+    world_frame: map         # Respecto que calcula
+
+    ### -----------------------------------------------------
+    ### Parámetros de sincronización y frecuencia
+    ### -----------------------------------------------------
+    frequency: 30.0            # Frecuencia a la que el nodo procesa datos
+    delay: 1.0                 # Ventana temporal para sincronizar IMU/GPS/Odom 
+    transform_timeout: 0.05
+
+    ### -----------------------------------------------------
+    ### Parámetros IMU
+    ### -----------------------------------------------------
+    use_odometry_yaw: true    # true = usa yaw de odometría, false = usa IMU
+    yaw_offset: 0.0          # Offset en radianes para ajustar la orientación
+    magnetic_declination_radians:  -0.18006 # Declinación magnética local: https://www.ngdc.noaa.gov/geomag/calculators/magcalc.shtml
+    zero_altitude: true      # True → fuerza altitud = 0
+    #use_manual_datum: false    # True → usar un datum fijo definido abajo
+
+    ### -----------------------------------------------------
+    ### GPS / NavSatFix
+    ### -----------------------------------------------------
+    publish_filtered_gps: true        # Publica /gps/filtered
+    wait_for_datum: false             # Esperar un datum inicial
+    broadcast_cartesian_transform: true   # Publica TF cartesian
+
+    ### -----------------------------------------------------
+    ### Configuración de datum manual (si use_manual_datum=true)
+    ### -----------------------------------------------------
+    datum: [55.944904, -3.186693, 0.0]
+
+    ### -----------------------------------------------------
+    ### Modo de transformación: UTM o Local Cartesian
+    ### -----------------------------------------------------
+    #use_local_cartesian: false        # true → ENU local; false → UTM
+    #broadcast_utm_transform: true    # Publicar TF UTM->world
+    broadcast_utm_transform_as_parent_frame: false
