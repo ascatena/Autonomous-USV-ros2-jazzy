@@ -862,11 +862,11 @@ Las pruebas confirmaron el correcto funcionamiento del sistema de comunicación 
 
 ### Imágenes del USV en el agua
 
-![Figura 6. Vista general del USV en el Lago del Bosque durante el ensayo](imgs/usv_lago_1.jpeg)
+![Figura 7. Vista general del USV en el Lago del Bosque durante el ensayo](imgs/usv_lago_1.jpeg)
 
 ---
 
-![Figura 7. Vista lateral del USV durante la prueba de teleoperación](imgs/usv_lago_2.jpeg)
+![Figura 8. Vista lateral del USV durante la prueba de teleoperación](imgs/usv_lago_2.jpeg)
 
 ---
 
