@@ -4,6 +4,24 @@
 
 ---
 
+### Software y Frameworks
+![ROS 2](https://img.shields.io/badge/ROS_2-Jazzy_Jalisco-22314E?style=for-the-badge&logo=ros&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04_LTS-E95420?style=for-the-badge&logo=ubuntu&logoColor=white)
+![Nav2](https://img.shields.io/badge/Nav2-Navegación_Autónoma-FF6F00?style=for-the-badge)
+![Colcon](https://img.shields.io/badge/Colcon-Build_System-4E4E4E?style=for-the-badge)
+
+### Hardware y Electrónica
+![Raspberry Pi](https://img.shields.io/badge/Raspberry_Pi-5-A22846?style=for-the-badge&logo=raspberry-pi&logoColor=white)
+![STM32](https://img.shields.io/badge/STM32-F103C8T6_(BluePill)-03234B?style=for-the-badge&logo=stmicroelectronics&logoColor=white)
+![GPS](https://img.shields.io/badge/Sensor-GPS_NEO--6M-10b981?style=for-the-badge)
+![IMU](https://img.shields.io/badge/Sensor-IMU_MPU9250-10b981?style=for-the-badge)
+
+### Herramientas de Control y Monitoreo
+![Foxglove Studio](https://img.shields.io/badge/Foxglove-Studio-6B21A8?style=for-the-badge)
+![WebSocket](https://img.shields.io/badge/foxglove__bridge-WebSocket-000000?style=for-the-badge)
+![UART](https://img.shields.io/badge/Comunicación-UART_sobre_LAN-blue?style=for-the-badge)
+
 ## Tabla de Contenidos
 
 1. [Descripción General](#descripción-general)
